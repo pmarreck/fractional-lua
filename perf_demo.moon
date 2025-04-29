@@ -1,0 +1,449 @@
+#!/usr/bin/env moonrun
+-- perf_demo.moon
+-- Tests performance of fractional library for financial calculations
+
+Fractional = require "fractional"
+cli_utils = require "cli_utils"
+Frac = Fractional  -- Alias for convenience
+
+-- Configuration
+DATA_FILE = "stock_prices.tsv"
+NUM_PORTFOLIOS = 20
+TRANSACTION_COUNT = 20000   -- Number of buy/sell transactions to generate
+TRANSACTION_SEED = 12345   -- Seed for transaction generation (for reproducibility)
+
+-- Load stock price data from TSV file
+load_stock_data = ->
+  file = io.open(DATA_FILE, "r")
+  if not file
+    error("Could not find stock price data file. Run stock_data_generator.moon first.")
+    
+  -- Parse header to get ticker symbols
+  header = file\read("*line")
+  tickers = {}
+  for ticker in header\gmatch("[^\t]+")
+    table.insert(tickers, ticker)
+  
+  -- First column is date, so remove it
+  table.remove(tickers, 1)
+  
+  -- Read data rows
+  prices = {}
+  days = {}
+  
+  for line in file\lines()
+    if line and line != ""
+      values = {}
+      day_data = {}
+      i = 1
+      
+      for value in line\gmatch("[^\t]+")
+        if i == 1
+          -- First column is date
+          day_data.date = value
+          table.insert(days, value)
+        else
+          -- Subsequent columns are stock prices
+          ticker = tickers[i-1]
+          day_data[ticker] = tonumber(value)
+        i += 1
+      
+      prices[day_data.date] = day_data
+  
+  file\close()
+  return {
+    tickers: tickers,  -- List of stock tickers
+    days: days,        -- List of dates in chronological order
+    prices: prices     -- Map of date -> {ticker -> price}
+  }
+
+-- Portfolio class to track holdings and performance
+class Portfolio
+  new: (name, initial_cash=Frac(10000, 1), market_data) =>
+    @name = name
+    @cash = initial_cash                 -- Cash on hand (Fractional)
+    @holdings = {}                       -- Map of ticker -> shares owned (Fractional)
+    @transactions = {}                   -- List of buy/sell transactions
+    @daily_value = {}                    -- Map of date -> portfolio value (Fractional)
+    @daily_return = {}                   -- Map of date -> daily return (Fractional)
+    @cumulative_return = {}              -- Map of date -> cumulative return (Fractional)
+    @initial_investment = initial_cash   -- Keep track of initial investment
+    @market = market_data                -- Store reference to market data
+    
+    -- Track performance numbers
+    @time_to_value = 0           -- Time spent calculating daily values
+    @time_to_returns = 0         -- Time spent calculating returns
+    @operation_count = 0         -- Count of fractional operations
+    
+    -- For all tickers, initialize holdings to 0
+    for _, ticker in ipairs(@market.tickers)
+      @holdings[ticker] = Frac(0)
+  
+  -- Buy a stock (amount in dollars)
+  buy: (date, ticker, dollars) =>
+    price_per_share = @market.prices[date][ticker]
+    return false if not price_per_share
+    
+    dollar_amount = if type(dollars) == "number"
+      Frac(dollars)
+    else
+      dollars
+    
+    -- Validate we have enough cash
+    if dollar_amount > @cash
+      return false
+      
+    -- Calculate shares to buy
+    price = Frac(price_per_share)
+    shares = dollar_amount / price
+    
+    -- Update cash and holdings
+    @cash = @cash - dollar_amount
+    @holdings[ticker] = if @holdings[ticker]
+      @holdings[ticker] + shares
+    else
+      shares
+    
+    -- Record transaction
+    table.insert(@transactions, {
+      date: date,
+      type: "buy", 
+      ticker: ticker, 
+      shares: shares,
+      price: price, 
+      amount: dollar_amount
+    })
+    
+    return true
+  
+  -- Sell a stock (amount in dollars or 'all' to sell all shares)
+  sell: (date, ticker, dollars_or_all) =>
+    price_per_share = @market.prices[date][ticker]
+    return false if not price_per_share
+    
+    -- Get current holding
+    current_shares = @holdings[ticker] or Frac(0)
+    if current_shares == Frac(0)
+      return false  -- Nothing to sell
+    
+    price = Frac(price_per_share)
+    current_value = current_shares * price
+    
+    shares_to_sell = nil
+    dollar_amount = nil
+    
+    if dollars_or_all == "all"
+      -- Sell all shares
+      shares_to_sell = current_shares
+      dollar_amount = current_value
+    else
+      -- Sell specified dollar amount
+      dollar_amount = if type(dollars_or_all) == "number"
+        Frac(dollars_or_all)
+      else
+        dollars_or_all
+      
+      -- Validate dollar amount isn't more than we have
+      if dollar_amount > current_value
+        dollar_amount = current_value
+      
+      -- Calculate shares to sell
+      shares_to_sell = dollar_amount / price
+    
+    -- Update cash and holdings
+    @cash = @cash + dollar_amount
+    @holdings[ticker] = current_shares - shares_to_sell
+    
+    -- Record transaction
+    table.insert(@transactions, {
+      date: date,
+      type: "sell", 
+      ticker: ticker, 
+      shares: shares_to_sell,
+      price: price, 
+      amount: dollar_amount
+    })
+    
+    return true
+  
+  -- Calculate portfolio value for a given date
+  calculate_value: (date) =>
+    start_time = os.clock()
+    total = Frac(@cash)  -- Start with cash
+    
+    -- Add value of all holdings
+    for ticker, shares in pairs(@holdings)
+      if shares > Frac(0) and @market.prices[date] and @market.prices[date][ticker]
+        price = Frac(@market.prices[date][ticker])
+        value = shares * price
+        @operation_count += 1  -- Count multiplication as operation
+        total = total + value
+        @operation_count += 1  -- Count addition as operation
+    
+    @daily_value[date] = total
+    @time_to_value += os.clock() - start_time
+    return total
+  
+  -- Calculate return metrics for all days
+  calculate_returns: =>
+    start_time = os.clock()
+    prev_value = nil
+    prev_date = nil
+    
+    for i, date in ipairs(@market.days)
+      if @daily_value[date]
+        current_value = @daily_value[date]
+        
+        -- Calculate daily return if we have a previous value
+        if prev_value
+          daily_change = current_value - prev_value
+          @operation_count += 1  -- Count subtraction
+          
+          -- Daily return as a fraction (daily_change / prev_value)
+          @daily_return[date] = daily_change / prev_value
+          @operation_count += 1  -- Count division
+        else
+          @daily_return[date] = Frac(0)
+        
+        -- Calculate cumulative return from initial investment
+        total_change = current_value - @initial_investment
+        @operation_count += 1  -- Count subtraction
+        
+        -- Cumulative return as a fraction (total_change / initial_investment)
+        -- This should represent the decimal (e.g., 0.25 for 25% return)
+        @cumulative_return[date] = total_change / @initial_investment
+        @operation_count += 1  -- Count division
+        
+        prev_value = current_value
+        prev_date = date
+    
+    @time_to_returns += os.clock() - start_time
+  
+  -- Calculate portfolio value for all days
+  calculate_all_values: =>
+    for _, date in ipairs(@market.days)
+      @calculate_value(date)
+  
+  -- Print portfolio summary
+  -- Helper function to format large fractions with better handling
+  format_large_fraction: (frac, prefix="$") =>
+    -- Get string representations to compute a better approximation
+    num_str = tostring(frac.num)
+    den_str = tostring(frac.den)
+    
+    -- Direct calculation for portfolio value totals
+    -- For portfolios, we need to sum actual share values correctly
+    
+    -- Check for special cases
+    if den_str == "0"
+      return "#{prefix}Infinity"
+      
+    if num_str == "0"
+      return "#{prefix}0.00"
+      
+    -- Extract up to 12 significant digits from numerator and denominator
+    sig_digits = 12
+    num_significant = string.sub(num_str\gsub("^%-", ""), 1, math.min(sig_digits, #num_str))
+    den_significant = string.sub(den_str\gsub("^%-", ""), 1, math.min(sig_digits, #den_str))
+    
+    -- Handle padding if one number is shorter
+    if #num_str < sig_digits
+      num_significant = num_significant .. string.rep("0", sig_digits - #num_str)
+    if #den_str < sig_digits
+      den_significant = den_significant .. string.rep("0", sig_digits - #den_str)
+    
+    -- Calculate magnitude difference
+    magnitude = #num_str - #den_str
+    
+    -- Convert prefix values to numbers
+    num_val = tonumber(num_significant)
+    den_val = tonumber(den_significant)
+    
+    if num_val and den_val and den_val > 0
+      -- For very large magnitudes, use scientific notation
+      if magnitude > 6
+        base = num_val / den_val
+        return string.format("#{prefix}%.2f × 10^%d", base, magnitude)
+      elseif magnitude < -6
+        base = num_val / den_val
+        return string.format("#{prefix}%.2f × 10^-%d", base, -magnitude)
+      else
+        -- For most portfolio values, try to compute actual value
+        -- Scale the significand ratio by the magnitude difference
+        ratio = num_val / den_val
+        if magnitude > 0
+          ratio = ratio * (10 ^ magnitude)
+        elseif magnitude < 0
+          ratio = ratio / (10 ^ -magnitude)
+        
+        -- Format with dollars and cents
+        return string.format("#{prefix}%.2f", ratio)
+    
+    -- Fallback to the normal format method
+    return frac\format_money()
+  
+  print_summary: =>
+    print "\nPortfolio Summary: #{@name}"
+    formatted_initial = @format_large_fraction(@initial_investment)
+    print "Initial Investment: #{formatted_initial} (#{@initial_investment})"
+    
+    -- Print final value and return
+    last_date = @market.days[#@market.days]
+    if @daily_value[last_date]
+      final_value = @daily_value[last_date]
+      return_pct = @cumulative_return[last_date] * Frac(100)
+      
+      -- Format percent properly - use to_number_for_display to get a simple number without approximation details
+      return_val = return_pct\to_number_for_display()
+      return_formatted = string.format("%.2f%%", return_val)
+      
+      -- Format final value
+      final_formatted = @format_large_fraction(final_value)
+      print "Final Value: #{final_formatted} (#{return_formatted} return) (#{final_value})"
+    
+    -- Print holdings
+    print "\nFinal Holdings:"
+    for ticker, shares in pairs(@holdings)
+      if shares > Frac(0)
+        last_price = @market.prices[last_date][ticker]
+        value = shares * Frac(last_price)
+        
+        -- Format using our helper
+        formatted_value = @format_large_fraction(value)
+        
+        -- Format shares using our built-in format method with 5 decimal places
+        formatted_shares = shares\format("", 5)
+          
+        formatted_price = string.format("%.2f", last_price)
+        print "  #{ticker}: #{formatted_shares} shares @ $#{formatted_price} = #{formatted_value} (#{value})"
+    
+    -- Format cash using our helper
+    formatted_cash = @format_large_fraction(@cash)
+    print "Cash on hand: #{formatted_cash} (#{@cash})"
+    
+    -- Print performance metrics
+    print "\nPerformance metrics:"
+    print "  Time spent calculating values: #{string.format("%.6f", @time_to_value)} seconds"
+    print "  Time spent calculating returns: #{string.format("%.6f", @time_to_returns)} seconds"
+    print "  Total operations: #{@operation_count}"
+    ops_per_sec = @operation_count / (@time_to_value + @time_to_returns)
+    print "  Operations per second: #{string.format("%.2f", ops_per_sec)}"
+
+-- Generate random transactions for a portfolio
+generate_random_transactions = (portfolio, num_transactions) ->
+  -- Set seed for reproducibility
+  math.randomseed(TRANSACTION_SEED)
+  
+  transaction_dates = {}
+  -- Use only 80% of available dates to leave some for evaluation
+  max_date_index = math.floor(#portfolio.market.days * 0.8)
+  
+  for i=1, max_date_index
+    table.insert(transaction_dates, portfolio.market.days[i])
+  
+  -- Generate random transactions
+  for i=1, num_transactions
+    -- Pick a random date
+    date_idx = math.random(1, #transaction_dates)
+    date = transaction_dates[date_idx]
+    
+    -- Pick a random ticker
+    ticker_idx = math.random(1, #portfolio.market.tickers)
+    ticker = portfolio.market.tickers[ticker_idx]
+    
+    -- Decide buy or sell
+    if math.random() < 0.7 or portfolio.holdings[ticker] == Frac(0)
+      -- Buy (70% of transactions, or always if we don't own the stock)
+      amount = math.random(100, 5000)  -- Random dollar amount $100-$5000
+      
+      -- Only buy if we have enough cash and with some randomness
+      if portfolio.cash > Frac(amount) and math.random() < 0.8
+        portfolio\buy(date, ticker, amount)
+    else
+      -- Sell (30% of transactions if we own the stock)
+      if math.random() < 0.3
+        -- 30% chance to sell all
+        portfolio\sell(date, ticker, "all")
+      else
+        -- Otherwise sell a random dollar amount of what we own
+        current_value = portfolio.holdings[ticker] * Frac(portfolio.market.prices[date][ticker])
+        max_sell = current_value\to_number()
+        
+        if max_sell > 100  -- Only sell if worth more than $100
+          amount = math.random(100, math.min(max_sell, 5000))
+          portfolio\sell(date, ticker, amount)
+
+-- Main performance test
+print "Portfolio Performance Testing with Fractional Library"
+print "===================================================="
+
+-- First ensure we have data
+print "Loading stock market data..."
+if not io.open(DATA_FILE, "r")
+  print "Stock data file not found. Generating synthetic data first..."
+  os.execute("moonrun stock_data_generator.moon")
+
+-- Load market data into global variable for easy access
+market = load_stock_data()
+print "Loaded data for #{#market.tickers} stocks over #{#market.days} days"
+
+-- Create portfolios
+print "\nCreating #{NUM_PORTFOLIOS} test portfolios..."
+portfolios = {}
+
+-- Start timing
+total_start_time = os.clock()
+
+for i=1, NUM_PORTFOLIOS
+  -- Create portfolio with random starting cash between $10K and $100K
+  initial_cash = 10000 + math.random(0, 90000)
+  portfolio = Portfolio("Portfolio #{i}", Frac(initial_cash), market)
+  
+  -- Generate random transactions
+  transactions_per_portfolio = math.floor(TRANSACTION_COUNT / NUM_PORTFOLIOS)
+  generate_random_transactions(portfolio, transactions_per_portfolio)
+  
+  -- Calculate portfolio value for all days
+  portfolio\calculate_all_values()
+  
+  -- Calculate returns
+  portfolio\calculate_returns()
+  
+  -- Add to list
+  table.insert(portfolios, portfolio)
+  
+  -- Print progress
+  print "Portfolio #{i} created with #{#portfolio.transactions} transactions"
+
+-- End timing
+total_time = os.clock() - total_start_time
+
+-- Print summary
+print "\n===================================================="
+print "Performance Summary"
+print "===================================================="
+print "Total portfolios: #{NUM_PORTFOLIOS}"
+print "Total transactions: #{TRANSACTION_COUNT}"
+print "Total calculation time: #{string.format("%.3f", total_time)} seconds"
+
+-- Calculate averages
+total_operations = 0
+total_calc_time = 0
+
+for _, portfolio in ipairs(portfolios)
+  total_operations += portfolio.operation_count
+  total_calc_time += portfolio.time_to_value + portfolio.time_to_returns
+
+ops_per_second = total_operations / total_calc_time
+print "Average operations per second: #{string.format("%.2f", ops_per_second)}"
+print "Total fractional operations: #{total_operations}"
+
+-- Print individual portfolio summaries
+print "\n===================================================="
+print "Individual Portfolio Results"
+print "===================================================="
+
+for _, portfolio in ipairs(portfolios)
+  portfolio\print_summary()
+
+print "\nPerformance test complete!"

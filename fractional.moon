@@ -1,0 +1,802 @@
+#!/usr/bin/env moonrun
+-- fractional.moon
+
+Bignum = require "bignum"
+
+class Fractional
+	new: (input=0, denominator=nil) =>
+		@operations_since_reduction = 0
+		@reduction_threshold = 10  -- Default to reduce every 10 operations
+
+		-- Handle different initialization cases
+		switch type(input)
+			when "string"
+				@_init_from_string(input)
+			when "number"
+				if denominator == nil
+					if input % 1 == 0  -- Integer
+						@_init_from_integers(input, 1)
+					else  -- Float
+						@_init_from_float(input)
+				else
+					@_init_from_integers(input, denominator)
+			when "table"
+				if input.__class == Fractional
+					@num = input.num
+					@den = input.den
+					@operations_since_reduction = input.operations_since_reduction
+					@reduction_threshold = input.reduction_threshold
+				else
+					error("Cannot initialize Fractional with table that is not a Fractional")
+			else
+				error("Unsupported Fractional input type")
+
+	_init_from_string: (str) =>
+		-- Parse "numerator/denominator" format
+		if str\match("^.-/.-$")
+			num_str, den_str = str\match("^(.-)/(.-)$")
+			@num = Bignum(num_str)
+			@den = Bignum(den_str)
+			if @den == Bignum(0)
+				error("Cannot initialize fraction with zero denominator")
+		else
+			-- Assume it's just an integer-like string
+			@num = Bignum(str)
+			@den = Bignum(1)
+
+	_init_from_integers: (num, den) =>
+		@num = Bignum(num)
+		@den = Bignum(den)
+		if @den == Bignum(0)
+			error("Cannot initialize fraction with zero denominator")
+
+	_init_from_float: (val) =>
+		-- Convert float to fraction with appropriate precision
+		str = tostring(val)
+		if str\match("%.") -- Has decimal point
+			integer_part, decimal_part = str\match("^(%-?%d*)%.(%d*)$")
+
+			-- Handle the case where the pattern doesn't match completely
+			integer_part = integer_part or "0"
+			decimal_part = decimal_part or ""
+
+			-- Calculate denominator based on decimal places
+			denominator = 10 ^ #decimal_part
+
+			-- Calculate numerator by removing decimal point
+			numerator = integer_part .. decimal_part
+			numerator = numerator\gsub("^-0$", "0") -- Handle -0 case
+
+			-- Initialize with big integers and reduce
+			@num = Bignum(numerator)
+			@den = Bignum(denominator)
+			@_reduce()
+		else
+			-- Just an integer
+			@num = Bignum(val)
+			@den = Bignum(1)
+
+	_quick_reduce: =>
+		-- Quick reduction: if both num and den are even, divide both by 2
+		-- This helps with intermediate reductions without expensive GCD calculation
+		while @num % Bignum(2) == Bignum(0) and @den % Bignum(2) == Bignum(0)
+			@num = @num / Bignum(2)
+			@den = @den / Bignum(2)
+
+		-- Ensure denominator is positive
+		if @den < Bignum(0)
+			@num = -@num
+			@den = -@den
+
+	_reduce: =>
+		-- First do a quick reduction
+		@_quick_reduce()
+
+		-- Then perform full reduction using GCD
+		gcd = @num\gcd(@den)
+		if gcd > Bignum(1)
+			@num = @num / gcd
+			@den = @den / gcd
+
+		-- Reset operation counter
+		@operations_since_reduction = 0
+
+	-- No longer needed - the check is now done directly in _binop
+	-- Kept as a comment for reference
+	--_maybe_reduce: =>
+	--  -- Check if we need to reduce based on operation count
+	--  @operations_since_reduction += 1
+	--  if @operations_since_reduction >= @reduction_threshold
+	--    @_reduce()
+
+	set_reduction_threshold: (threshold) =>
+		if type(threshold) != "number" or threshold < 0
+			error("Reduction threshold must be a non-negative number")
+		@reduction_threshold = threshold
+
+	reduce: =>
+		@_reduce()
+
+	tostring: =>
+		-- Create a copy to avoid modifying the operations count of the original
+		copy = Fractional(0)
+		copy.num = Bignum(tostring(@num))
+		copy.den = Bignum(tostring(@den))
+
+		-- Reduce the copy
+		copy\_reduce()
+
+		-- Return the string representation of the reduced copy
+		"#{copy.num}/#{copy.den}"
+
+	__tostring: => @tostring!
+
+	to_number: =>
+		-- Convert to Lua float using GMP's native ratio to double conversion
+		-- This should handle most fractions correctly, even very large ones
+		Bignum.ratio_to_double(@num, @den)
+		
+	-- A reliable method to get a displayable number even for extreme fractions
+	to_number_for_display: =>
+		-- Get string representations
+		num_str = tostring(@num)
+		den_str = tostring(@den)
+		
+		-- Check for special cases
+		if den_str == "0"
+			return math.huge  -- Return infinity
+			
+		if num_str == "0" or num_str == "-0"
+			return 0.0  -- Zero is always zero
+		
+		-- Try to use GMP's native ratio_to_double for most accurate conversion
+		-- But have fallbacks ready in case the function is not available
+		result = nil
+		success = pcall ->
+			result = Bignum.ratio_to_double(@num, @den)
+		
+		-- If the conversion failed for any reason, try a direct approach
+		if not success or not result or result != result  -- Check for NaN
+			-- Direct string conversion for smaller numbers
+			num_str_val = tonumber(num_str)
+			den_str_val = tonumber(den_str)
+			
+			if num_str_val and den_str_val and den_str_val != 0 and 
+				 #num_str < 15 and #den_str < 15
+				-- Numbers are within range of safe direct conversion
+				result = num_str_val / den_str_val
+			
+		-- If we got a valid result that's not extreme, return it
+		if result and result == result and result != math.huge and result != -math.huge and result != 0
+			return result
+			
+		-- IMPROVED ANALYSIS FOR EXTREME VALUES
+		
+		-- Direct length analysis for very extreme values
+		-- If the difference is more than 308 digits (roughly double's max exponent),
+		-- we can immediately determine if it's effectively infinity or zero
+		if #num_str > #den_str + 308
+			return math.huge  -- Too big for double
+			
+		if #den_str > #num_str + 308
+			return 0.0  -- Too small for double
+			
+		-- For less extreme but still large differences, use scientific notation approach
+		if #num_str > #den_str + 15
+			-- Result will be large but might fit in double - use scientific approximation
+			-- Extract up to 15 significant digits (double precision limit)
+			sig_digits = 15
+			num_significant = string.sub(num_str\gsub("^%-", ""), 1, math.min(sig_digits, #num_str))
+			den_significant = string.sub(den_str\gsub("^%-", ""), 1, math.min(sig_digits, #den_str))
+			
+			-- Pad the shorter value if needed
+			if #den_str < sig_digits
+				den_significant = den_significant .. string.rep("0", sig_digits - #den_str)
+				
+			-- Convert to numbers
+			num_val = tonumber(num_significant)
+			den_val = tonumber(den_significant)
+			
+			if num_val and den_val and den_val > 0
+				-- Calculate mantissa (the significant digits ratio)
+				mantissa = num_val / den_val
+				
+				-- Calculate exponent adjustment
+				exponent = (#num_str - #den_str) - (sig_digits - math.min(sig_digits, #den_str))
+				
+				-- Return in scientific notation format
+				return mantissa * (10 ^ exponent)
+				
+		-- For very small values
+		if #den_str > #num_str + 15
+			-- Result will be very small - use scientific approximation
+			sig_digits = 15
+			num_significant = string.sub(num_str\gsub("^%-", ""), 1, math.min(sig_digits, #num_str))
+			den_significant = string.sub(den_str\gsub("^%-", ""), 1, math.min(sig_digits, #den_str))
+			
+			-- Pad the shorter value if needed
+			if #num_str < sig_digits
+				num_significant = num_significant .. string.rep("0", sig_digits - #num_str)
+				
+			-- Convert to numbers
+			num_val = tonumber(num_significant)
+			den_val = tonumber(den_significant)
+			
+			if num_val and den_val and den_val > 0
+				-- Calculate mantissa (the significant digits ratio)
+				mantissa = num_val / den_val
+				
+				-- Calculate exponent adjustment
+				exponent = (#den_str - #num_str) - (sig_digits - math.min(sig_digits, #num_str))
+				
+				-- Return in scientific notation format for small values
+				return mantissa / (10 ^ exponent)
+		
+		-- For more moderate values, use a balanced truncation approach
+		-- Determine how many digits we can safely process (double precision ~15-16 digits)
+		max_safe_digits = 15
+		
+		-- If either number exceeds safe digit count, truncate both proportionally
+		if #num_str > max_safe_digits or #den_str > max_safe_digits
+			-- Calculate total excess digits
+			total_digits = #num_str + #den_str
+			excess = total_digits - (2 * max_safe_digits)
+			
+			if excess > 0
+				-- Calculate how much to remove from each, weighted by their digit counts
+				num_truncate = math.floor(excess * (#num_str / total_digits))
+				den_truncate = excess - num_truncate
+				
+				-- Ensure we don't truncate too much
+				num_truncate = math.min(num_truncate, #num_str - 1)
+				den_truncate = math.min(den_truncate, #den_str - 1)
+				
+				-- Create truncated strings
+				truncated_num = string.sub(num_str, 1, #num_str - num_truncate)
+				truncated_den = string.sub(den_str, 1, #den_str - den_truncate)
+				
+				-- Convert to numbers
+				num_val = tonumber(truncated_num)
+				den_val = tonumber(truncated_den)
+				
+				if num_val and den_val and den_val != 0
+					-- Calculate ratio and adjust for truncation difference
+					result = num_val / den_val
+					
+					-- Scale the result based on truncation difference
+					scale = 10 ^ (num_truncate - den_truncate)
+					return result / scale
+		
+		-- For values within safe range, try direct conversion
+		num_val = tonumber(num_str)
+		den_val = tonumber(den_str)
+		
+		if num_val and den_val and den_val != 0
+			return num_val / den_val
+			
+		-- Fallback: use digit count as approximation
+		magnitude_diff = #num_str - #den_str
+		
+		if magnitude_diff > 0
+			-- More digits in numerator - large value
+			return 1.0 * (10 ^ magnitude_diff)
+		elseif magnitude_diff < 0
+			-- More digits in denominator - small value
+			return 1.0 / (10 ^ -magnitude_diff)
+		else
+			-- Similar digit counts, use first digit ratio
+			first_num = tonumber(string.sub(num_str, 1, 1)) or 1
+			first_den = tonumber(string.sub(den_str, 1, 1)) or 1
+			
+			if first_den > 0
+				return first_num / first_den
+			else
+				return math.huge  -- Emergency fallback
+
+	to_number_annotated: =>
+		-- Convert to Lua float with precision loss estimate
+		val = @to_number()
+
+		-- Calculate approximate precision loss
+		num_digits = #tostring(@num)
+		den_digits = #tostring(@den)
+		max_digits = math.max(num_digits, den_digits)
+
+		est_loss = max_digits > 15 and ("~" .. (max_digits - 15) .. " digits lost") or "~0 digits lost"
+		val, est_loss
+		
+	-- Convert to Lua float using GMP's native ratio to double conversion
+	safe_to_number: =>
+		-- Try to convert to a Lua number
+		num = nil
+		ok = pcall ->
+			num = @to_number()
+		
+		-- Make sure we got a valid number (not NaN)
+		if num and num == num
+			return num
+		else
+			return nil
+	
+	-- Convert a fraction to a float using robust methods with precision loss estimate
+	to_approximate_float: =>
+		-- Get string representations to measure precision
+		num_str = tostring(@num)
+		den_str = tostring(@den)
+		max_digits = math.max(#num_str, #den_str)
+		
+		-- Calculate approximate precision loss (doubles have ~15-17 digits precision)
+		digits_lost = max_digits > 15 and max_digits - 15 or 0
+		
+		-- First try direct GMP-based conversion (most accurate for values within range)
+		result = @to_number_for_display()
+		
+		-- Check if result is valid and not an extreme value
+		if result and result == result and result != math.huge and result != -math.huge and result != 0
+			return result, digits_lost
+			
+		-- For values outside float range, estimate based on digit analysis
+		-- Very large values (numerator significantly larger)
+		if #num_str > #den_str + 5
+			-- Calculate magnitude difference
+			magnitude_diff = #num_str - #den_str
+			
+			-- Extract leading digits (up to 6) for better approximation
+			sig_digits = 6
+			num_significant = string.sub(num_str\gsub("^%-", ""), 1, math.min(sig_digits, #num_str))
+			den_significant = string.sub(den_str\gsub("^%-", ""), 1, math.min(sig_digits, #den_str))
+			
+			-- Pad shorter values with zeros
+			if #den_str < sig_digits
+				den_significant = den_significant .. string.rep("0", sig_digits - #den_str)
+				
+			-- Convert to numbers
+			num_val = tonumber(num_significant)
+			den_val = tonumber(den_significant)
+			
+			if num_val and den_val and den_val > 0
+				-- Calculate mantissa and adjust for scale
+				mantissa = num_val / den_val
+				exponent = magnitude_diff - (sig_digits - math.min(sig_digits, #den_str))
+				
+				-- Return scientific notation approximation
+				return mantissa * (10 ^ exponent), max_digits
+				
+		-- Very small values (denominator significantly larger)
+		if #den_str > #num_str + 5
+			-- Calculate magnitude difference
+			magnitude_diff = #den_str - #num_str
+			
+			-- Extract leading digits (up to 6) for better approximation
+			sig_digits = 6
+			num_significant = string.sub(num_str\gsub("^%-", ""), 1, math.min(sig_digits, #num_str))
+			den_significant = string.sub(den_str\gsub("^%-", ""), 1, math.min(sig_digits, #den_str))
+			
+			-- Pad shorter values with zeros
+			if #num_str < sig_digits
+				num_significant = num_significant .. string.rep("0", sig_digits - #num_str)
+				
+			-- Convert to numbers
+			num_val = tonumber(num_significant)
+			den_val = tonumber(den_significant)
+			
+			if num_val and den_val and den_val > 0
+				-- Calculate mantissa and adjust for scale
+				mantissa = num_val / den_val
+				exponent = magnitude_diff - (sig_digits - math.min(sig_digits, #num_str))
+				
+				-- Return scientific notation approximation (for small values)
+				return mantissa / (10 ^ exponent), max_digits
+				
+		-- For values with similar magnitude, try regular division with truncation
+		-- Calculate needed truncation to fit within double precision
+		if max_digits > 15
+			-- Truncate both values proportionally
+			excess_digits = max_digits - 15
+			num_truncate = math.min(#num_str - 1, math.ceil(excess_digits * (#num_str / max_digits)))
+			den_truncate = math.min(#den_str - 1, excess_digits - num_truncate)
+			
+			-- Truncate strings
+			truncated_num = string.sub(num_str, 1, #num_str - num_truncate)
+			truncated_den = string.sub(den_str, 1, #den_str - den_truncate)
+			
+			-- Create truncated fraction and convert
+			truncated = Fractional("#{truncated_num}/#{truncated_den}")
+			approximation = truncated\safe_to_number()
+			
+			if approximation and approximation != math.huge and approximation != -math.huge and approximation != 0
+				-- Scale by powers of 10 based on truncation difference
+				scale_factor = 10 ^ (num_truncate - den_truncate)
+				return approximation / scale_factor, num_truncate + den_truncate
+				
+		-- Last resort: very rough approximation based on digit counts
+		magnitude_diff = #num_str - #den_str
+		
+		if magnitude_diff > 0
+			-- Large value approximation
+			return 1.0 * (10 ^ magnitude_diff), max_digits
+		elseif magnitude_diff < 0
+			-- Small value approximation
+			return 1.0 / (10 ^ -magnitude_diff), max_digits
+		else
+			-- Similar magnitude, use first digit ratio
+			num_first = tonumber(string.sub(num_str, 1, 1)) or 1
+			den_first = tonumber(string.sub(den_str, 1, 1)) or 1
+			
+			if den_first > 0
+				return num_first / den_first, max_digits
+				
+		-- Absolute fallback (should rarely reach here)
+		return nil, nil
+		
+	-- Helper to format large number strings
+	_format_large_number: (str) =>
+		if #str <= 5
+			return str
+		
+		first_digits = string.sub(str, 1, 5)
+		return "#{first_digits}...e#{#str - 5}"
+	
+	-- Format a fraction as a human-readable string with a prefix (like "$")
+	format: (prefix="", decimal_places=2) =>
+		-- Get string representations of numerator and denominator
+		num_str = tostring(@num)
+		den_str = tostring(@den)
+		
+		-- IMPROVED DIRECT ANALYSIS OF THE FRACTION - Most reliable for extreme values
+		
+		-- Check for special cases
+		if den_str == "0"
+			return "#{prefix}Infinity"  -- Division by zero
+		
+		-- First check for zero numerator (avoid unnecessary work)
+		if num_str == "0" or num_str == "-0"
+			return string.format("#{prefix}%.#{decimal_places}f", 0.0)
+			
+		-- Function to safely extract significant digits and format them
+		extract_significant = (value_str, sign_prefix="", limit=6) ->
+			-- Extract up to 'limit' significant digits, ignoring signs
+			digits = value_str\gsub("^%-", "")  -- Remove negative sign if present
+			significant = string.sub(digits, 1, math.min(limit, #digits))
+			-- Add sign prefix back if original was negative
+			if value_str\match("^%-") 
+				return sign_prefix .. significant
+			else
+				return significant
+		
+		-- VERY LARGE numbers (num >> den)
+		if #num_str > #den_str + 10  -- More relaxed condition to catch more extreme values
+			-- Get magnitude difference from digit lengths
+			magnitude = #num_str - #den_str
+			
+			-- Extract significant digits (using 6 for better precision)
+			sig_digits = 6
+			num_significant = extract_significant(num_str, "", sig_digits)
+			den_significant = extract_significant(den_str, "", sig_digits)
+			
+			-- Ensure sufficient digits in denominators with fewer digits
+			if #den_str < sig_digits
+				den_significant = den_significant .. string.rep("0", sig_digits - #den_str)
+			
+			-- Convert to numeric values
+			num_val = tonumber(num_significant)
+			den_val = tonumber(den_significant)
+			
+			if num_val and den_val and den_val > 0
+				-- Calculate mantissa (leading digits of fraction)
+				mantissa = num_val / den_val
+				
+				-- Adjust for insignificant digits (beyond what we used from each)
+				exponent = magnitude - (sig_digits - math.min(sig_digits, #den_str))
+				
+				-- Format with scientific notation
+				return string.format("#{prefix}%.#{decimal_places}f × 10^%d", mantissa, exponent)
+			else
+				-- Fallback if conversion fails
+				return string.format("#{prefix}~10^%d (very large)", magnitude)
+				
+		-- VERY SMALL numbers (den >> num)
+		if #den_str > #num_str + 10  -- More relaxed condition
+			-- Get magnitude difference from digit lengths
+			magnitude = #den_str - #num_str
+			
+			-- Extract significant digits (using 6 for better precision)
+			sig_digits = 6
+			num_significant = extract_significant(num_str, "", sig_digits)
+			den_significant = extract_significant(den_str, "", sig_digits)
+			
+			-- Ensure sufficient digits in numerator with fewer digits
+			if #num_str < sig_digits
+				num_significant = num_significant .. string.rep("0", sig_digits - #num_str)
+			
+			-- Convert to numeric values
+			num_val = tonumber(num_significant)
+			den_val = tonumber(den_significant)
+			
+			if num_val and den_val and den_val > 0
+				-- Calculate mantissa (leading digits of fraction)
+				mantissa = num_val / den_val
+				
+				-- Adjust for insignificant digits
+				exponent = magnitude - (sig_digits - math.min(sig_digits, #num_str))
+				
+				-- Format with scientific notation
+				return string.format("#{prefix}%.#{decimal_places}f × 10^-%d", mantissa, exponent)
+			else
+				-- Fallback if conversion fails
+				return string.format("#{prefix}~10^-%d (very small)", magnitude)
+		
+		-- For MODERATELY SIZED numbers, use a more robust direct calculation
+		
+		-- Determine how many digits we can safely process (max precision in Lua doubles ~15-16 digits)
+		-- Add a safety margin
+		max_proc_digits = 12  
+		
+		-- Calculate digit lengths of numerator and denominator
+		num_digits = #num_str\gsub("^%-", "")  -- Ignore sign
+		den_digits = #den_str\gsub("^%-", "")  -- Ignore sign
+		
+		-- Check if we need to truncate for processing
+		if num_digits > max_proc_digits or den_digits > max_proc_digits
+			-- Calculate how much to truncate from each
+			total_excess = (num_digits + den_digits) - (2 * max_proc_digits)
+			num_truncate = math.floor(total_excess * (num_digits / (num_digits + den_digits)))
+			den_truncate = total_excess - num_truncate
+			
+			-- Ensure minimum digits remain (at least 4)
+			if num_digits - num_truncate < 4
+				num_truncate = num_digits - 4
+				num_truncate = math.max(0, num_truncate)  -- Cannot be negative
+				
+			if den_digits - den_truncate < 4
+				den_truncate = den_digits - 4
+				den_truncate = math.max(0, den_truncate)  -- Cannot be negative
+				
+			-- Get truncated versions (preserve sign)
+			num_prefix = if num_str\match("^%-")
+				"-" .. string.sub(num_str\gsub("^%-", ""), 1, num_digits - num_truncate)
+			else
+				string.sub(num_str, 1, num_digits - num_truncate)
+				
+			den_prefix = if den_str\match("^%-")
+				"-" .. string.sub(den_str\gsub("^%-", ""), 1, den_digits - den_truncate)
+			else
+				string.sub(den_str, 1, den_digits - den_truncate)
+				
+			-- Convert to numeric values
+			num_val = tonumber(num_prefix)
+			den_val = tonumber(den_prefix)
+			
+			if num_val and den_val and den_val != 0
+				-- Direct ratio calculation
+				ratio = num_val / den_val
+				
+				-- Scale by powers of 10 based on truncation
+				scale_factor = 10 ^ (num_truncate - den_truncate)
+				ratio = ratio / scale_factor
+				
+				-- Format with indication of approximation
+				total_truncated = num_truncate + den_truncate
+				return string.format("#{prefix}%.#{decimal_places}f (approx, truncated %d digits)", ratio, total_truncated)
+			else
+				-- Fallback: compare digit counts directly
+				magnitude_diff = num_digits - den_digits
+				if magnitude_diff > 0
+					return string.format("#{prefix}~10^%d (large)", magnitude_diff)
+				elseif magnitude_diff < 0
+					return string.format("#{prefix}~10^-%d (small)", -magnitude_diff)
+				else
+					-- Show portion of the raw fraction if counts are similar
+					num_short = string.sub(num_str, 1, math.min(6, #num_str)) 
+					den_short = string.sub(den_str, 1, math.min(6, #den_str))
+					
+					if #num_str > 6
+						num_short = "#{num_short}..."
+					if #den_str > 6
+						den_short = "#{den_short}..."
+						
+					return "#{prefix}#{num_short}/#{den_short}"
+		else
+			-- For numbers within safe processing range, convert directly
+			-- Try direct GMP-based conversion first (most accurate)
+			val = @to_number_for_display()
+			
+			-- Check if we got a valid, non-extreme value
+			if val and val == val and val != math.huge and val != -math.huge and val != 0
+				return string.format("#{prefix}%.#{decimal_places}f", val)
+				
+			-- If direct conversion failed, use the truncation approach
+			val = @safe_to_number()
+			if val and val == val and val != math.huge and val != -math.huge and val != 0
+				return string.format("#{prefix}%.#{decimal_places}f", val)
+			
+			-- Last resort: compare digit counts
+			magnitude_diff = num_digits - den_digits
+			if magnitude_diff > 0
+				return string.format("#{prefix}~10^%d (large)", magnitude_diff)
+			elseif magnitude_diff < 0
+				return string.format("#{prefix}~10^-%d (small)", -magnitude_diff)
+			else
+				-- Process directly since digits are similar
+				num_val = tonumber(num_str)
+				den_val = tonumber(den_str)
+				
+				if num_val and den_val and den_val != 0
+					ratio = num_val / den_val
+					return string.format("#{prefix}%.#{decimal_places}f", ratio)
+				else
+					-- Show raw fraction as fallback
+					return "#{prefix}#{num_str}/#{den_str}"
+			
+	-- Format specifically for money display (with $ prefix and 2 decimal places)
+	format_money: =>
+		return @format("$", 2)
+
+	_binop: (other, op) =>
+		-- Ensure other is a Fractional
+		unless Fractional\is_instance(other)
+			other = Fractional(other)
+
+		result = Fractional(0)  -- Create new Fractional to store result
+
+		switch op
+			when "add"
+				-- a/b + c/d = (a*d + b*c)/(b*d)
+				result.num = (@num * other.den) + (@den * other.num)
+				result.den = @den * other.den
+			when "sub"
+				-- a/b - c/d = (a*d - b*c)/(b*d)
+				result.num = (@num * other.den) - (@den * other.num)
+				result.den = @den * other.den
+			when "mul"
+				-- a/b * c/d = (a*c)/(b*d)
+				result.num = @num * other.num
+				result.den = @den * other.den
+			when "div"
+				-- a/b / c/d = (a*d)/(b*c)
+				if other.num == Bignum(0)
+					error("Division by zero")
+				result.num = @num * other.den
+				result.den = @den * other.num
+
+		-- Quick reduce the result and update operation count
+		result\_quick_reduce()
+
+		-- Sum the operations from both operands and add 1 for current operation
+		operation_count = @operations_since_reduction + other.operations_since_reduction + 1
+
+		-- Set the operations count for the result
+		result.operations_since_reduction = operation_count
+
+		-- Check if we need to reduce
+		when_reduce = result.operations_since_reduction >= result.reduction_threshold
+		if when_reduce
+			-- The _reduce method will reset operations_since_reduction to 0
+			result\_reduce()
+
+		result
+
+	__add: (other) => @_binop(other, "add")
+	__sub: (other) => @_binop(other, "sub")
+	__mul: (other) => @_binop(other, "mul")
+	__div: (other) => @_binop(other, "div")
+	__unm: =>
+		result = Fractional(0)
+		result.num = -@num
+		result.den = @den
+		result
+
+	__eq: (other) =>
+		unless Fractional\is_instance(other)
+			other = Fractional(other)
+
+		-- For equality, we need to reduce both fractions first
+		@_reduce()
+		other\_reduce()
+
+		-- Now we can compare the numerators and denominators directly
+		@num == other.num and @den == other.den
+
+	__lt: (other) =>
+		unless Fractional\is_instance(other)
+			other = Fractional(other)
+
+		-- a/b < c/d is true if a*d < b*c
+		(@num * other.den) < (@den * other.num)
+
+	__le: (other) =>
+		unless Fractional\is_instance(other)
+			other = Fractional(other)
+
+		-- a/b <= c/d is true if a*d <= b*c
+		(@num * other.den) <= (@den * other.num)
+
+	pow: (exponent) =>
+		if type(exponent) != "number" or exponent < 0 or exponent % 1 != 0
+			error("Exponent must be a non-negative integer")
+
+		result = Fractional(0)
+		if exponent == 0
+			-- Any number to the power of 0 is 1
+			result.num = Bignum(1)
+			result.den = Bignum(1)
+		else
+			-- For positive exponents
+			result.num = @num\pow(exponent)
+			result.den = @den\pow(exponent)
+
+		result
+
+	__pow: (exp) => @pow(exp)
+
+	@is_instance: (val) =>
+		type(val) == "table" and val.__class == Fractional
+
+-- Test suite trigger
+if arg and arg[0] and arg[1] == "--test"
+	script_path = debug.getinfo(1, "S").source\match "^@(.*/)"
+	package.path = script_path .. "?.lua;" .. script_path .. "?.moon;" .. package.path
+	cli_utils = require "cli_utils"
+	tf = cli_utils.assert_factory!
+	F = Fractional
+
+	-- Test basic initialization and conversions
+	tf.assert F("3/4")\tostring! == "3/4", "String initialization works"
+	tf.assert F(3, 4)\tostring! == "3/4", "Two-arg initialization works"
+	tf.assert F(1.5)\tostring! == "3/2", "Float initialization works"
+
+	-- Test reduction
+	tf.assert F(6, 8)\tostring! == "3/4", "Fraction is reduced when converted to string"
+	tf.assert F(10, 15)\tostring! == "2/3", "GCD reduction works"
+
+	-- Test operations
+	tf.assert (F("1/2") + F("1/4"))\tostring! == "3/4", "Addition works"
+	tf.assert (F("3/4") - F("1/4"))\tostring! == "1/2", "Subtraction works"
+	tf.assert (F("2/3") * F("3/4"))\tostring! == "1/2", "Multiplication works"
+	tf.assert (F("2/3") / F("3/4"))\tostring! == "8/9", "Division works"
+
+	-- Test comparisons
+	tf.assert F("1/2") == F("2/4"), "Equality comparison works"
+	tf.assert F("1/3") < F("1/2"), "Less than comparison works"
+	tf.assert F("2/3") > F("1/2"), "Greater than comparison works"
+	tf.assert F("1/2") <= F("1/2"), "Less than or equal works"
+	tf.assert F("1/2") >= F("1/2"), "Greater than or equal works"
+
+	-- Test negation
+	tf.assert (-F("3/4"))\tostring! == "-3/4", "Negation works"
+	tf.assert F("-3/4")\tostring! == "-3/4", "Negative string initialization works"
+
+	-- Test to_number
+	f, note = F("22/7")\to_number_annotated!
+	tf.assert type(f) == "number", "Float conversion returns a number"
+	tf.assert math.abs(f - 3.14285714285714) < 0.0000001, "Float conversion has correct value"
+	tf.assert type(note) == "string", "Precision loss note is a string"
+
+	-- Test exponentiation
+	tf.assert (F("2/3") ^ 2)\tostring! == "4/9", "Exponentiation works"
+	tf.assert (F("1/2") ^ 0)\tostring! == "1/1", "Exponentiation with zero works"
+
+	-- Test reduction threshold
+	complex = F("60/75")
+	complex\set_reduction_threshold(100)
+	tf.assert complex.reduction_threshold == 100, "Setting reduction threshold works"
+
+	-- Test auto-reduction
+	unreduced = F(0)
+	unreduced.num = Bignum(10)
+	unreduced.den = Bignum(20)
+	unreduced.operations_since_reduction = 0
+	unreduced.reduction_threshold = 3
+
+	-- Perform operations until we hit the threshold
+	for i=1,3
+		unreduced = unreduced + F(0)
+
+	-- Now the result should be reduced (10/20 -> 1/2)
+	tf.assert unreduced.num\tostring! == "1", "Auto-reduction reduces numerator correctly"
+	tf.assert unreduced.den\tostring! == "2", "Auto-reduction reduces denominator correctly"
+
+	io.stderr\write "Fractional tests completed. Failures: #{tf.fails!}\n"
+	os.exit tf.fails!
+
+return Fractional

@@ -1,0 +1,137 @@
+#!/usr/bin/env moonrun
+-- stock_data_generator.moon
+-- Generates synthetic stock price data for performance testing
+
+cli_utils = require "cli_utils"
+
+-- Initialize RNG with good seed
+cli_utils.seed_rng!
+
+-- Configuration
+NUM_STOCKS = 50      -- Number of different stocks to generate
+DAYS = 365           -- Number of days of price history
+START_YEAR = 2020    -- Starting year for date generation
+OUTPUT_FILE = "stock_prices.tsv"
+
+-- Stock configuration helper
+create_stock = (ticker, bias) ->
+	{
+		ticker: ticker               -- Stock ticker symbol
+		price: 10 + math.random(90)  -- Random initial price between $10-$100
+		volatility: 0.01 + math.random() * 0.04  -- Daily volatility 1-5%
+		bias: bias                   -- Daily drift tendency (-0.001 to +0.003)
+	}
+
+-- Generate a list of stocks with different characteristics
+generate_stocks = ->
+	stocks = {}
+
+	-- Common stock tickers (made up)
+	tickers = {"AAPL", "MSFT", "GOOG", "AMZN", "META", "NFLX", "TSLA", "NVDA",
+						 "CSCO", "INTC", "ADBE", "PYPL", "CMCSA", "PEP", "COST", "TMUS",
+						 "SBUX", "QCOM", "TXN", "CHTR", "AVGO", "GILD", "MDLZ", "FISV"}
+
+	-- Use the provided tickers first
+	for i=1, math.min(NUM_STOCKS, #tickers)
+		-- Assign bias: 70% slightly positive, 30% slightly negative
+		bias = math.random() < 0.7 and math.random() * 0.003 or -math.random() * 0.001
+		table.insert(stocks, create_stock(tickers[i], bias))
+
+	-- If we need more stocks than our predefined list, generate random ticker symbols
+	if NUM_STOCKS > #tickers
+		for i=#tickers+1, NUM_STOCKS
+			-- Generate a random 4-letter ticker
+			ticker = string.char(65 + math.random(0, 25)) ..
+							 string.char(65 + math.random(0, 25)) ..
+							 string.char(65 + math.random(0, 25)) ..
+							 string.char(65 + math.random(0, 25))
+
+			-- Assign bias: 50% slightly positive, 50% slightly negative for random stocks
+			bias = math.random() < 0.5 and math.random() * 0.002 or -math.random() * 0.002
+			table.insert(stocks, create_stock(ticker, bias))
+
+	stocks
+
+-- Generate a date string for a given day offset
+get_date_string = (day_offset) ->
+	base = os.time({year: START_YEAR, month: 1, day: 1})
+	date = os.date("*t", base + day_offset * 86400)  -- 86400 seconds per day
+	string.format("%04d-%02d-%02d", date.year, date.month, date.day)
+
+-- Simulate price movement for all stocks over time
+simulate_price_movement = (stocks) ->
+	prices = {}
+
+	-- Iterate through each day
+	for day=0, DAYS-1
+		date = get_date_string(day)
+		daily_prices = {date: date}
+
+		-- Update each stock price
+		for _, stock in ipairs(stocks)
+			if day == 0
+				-- First day uses initial price
+				daily_prices[stock.ticker] = stock.price
+			else
+				-- Subsequent days use random walk with drift
+				prev_price = prices[day][stock.ticker]
+				change = prev_price * stock.volatility * (2 * math.random() - 1) + prev_price * stock.bias
+				new_price = prev_price + change
+
+				-- Ensure price doesn't go negative or too low
+				new_price = math.max(new_price, 1.0)
+
+				-- Sometimes introduce a price spike/crash for realism
+				if math.random() < 0.003  -- 0.3% chance of a significant event
+					if math.random() < 0.5
+						-- Spike up (good earnings, acquisition, etc.)
+						new_price = new_price * (1 + math.random() * 0.15)  -- Up to 15% jump
+					else
+						-- Crash (bad news, etc.)
+						new_price = new_price * (1 - math.random() * 0.12)  -- Up to 12% drop
+
+				daily_prices[stock.ticker] = new_price
+
+		-- Store daily prices
+		table.insert(prices, daily_prices)
+
+	prices
+
+-- Write price data to a TSV file
+write_to_tsv = (prices) ->
+	file = io.open(OUTPUT_FILE, "w")
+	if not file
+		error("Could not open output file for writing")
+
+	-- Write header row with all ticker symbols
+	header = {"Date"}
+
+	-- Get ticker symbols from the first day's data
+	for ticker, _ in pairs(prices[1])
+		if ticker != "date"
+			table.insert(header, ticker)
+
+	file\write(table.concat(header, "\t") .. "\n")
+
+	-- Write data rows
+	for _, day_data in ipairs(prices)
+		row = {day_data.date}
+
+		for _, ticker in ipairs(header)
+			if ticker != "Date"
+				-- Format to 2 decimal places for readability
+				price = string.format("%.2f", day_data[ticker])
+				table.insert(row, price)
+
+		file\write(table.concat(row, "\t") .. "\n")
+
+	file\close()
+	print "Generated #{#prices} days of price data for #{#header-1} stocks"
+	print "Output written to #{OUTPUT_FILE}"
+
+-- Main program
+print "Generating synthetic stock price data..."
+stocks = generate_stocks()
+prices = simulate_price_movement(stocks)
+write_to_tsv(prices)
+print "Done!"
