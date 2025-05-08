@@ -1,9 +1,9 @@
 local DEBUG = true
 if DEBUG then
-  if not arg or not arg[1] or arg[1] ~= "--debug" then
-    local arg = arg or { }
-    table.insert(arg, "--debug")
-  end
+	if not arg or not arg[1] or arg[1] ~= "--debug" then
+		local arg = arg or { }
+		table.insert(arg, "--debug")
+	end
 end
 local Fractional = require("fractional")
 local Bignum = require("bignum")
@@ -11,8 +11,8 @@ print("Fractional Library Demo")
 print("---------------------------")
 local display
 display = function(title, frac)
-  local num, loss = frac:to_number_annotated()
-  return print(tostring(title) .. ": " .. tostring(frac) .. " (≈ " .. tostring(num) .. " " .. tostring(loss) .. ")")
+	local num, loss = frac:to_number_annotated()
+	return print(tostring(title) .. ": " .. tostring(frac) .. " (≈ " .. tostring(num) .. " " .. tostring(loss) .. ")")
 end
 print("\nInitializing fractions:")
 display("From string", Fractional("22/7"))
@@ -65,14 +65,14 @@ f.operations_since_reduction = 0
 f.reduction_threshold = 10
 print("Created f = 4/8 with threshold " .. tostring(f.reduction_threshold) .. " and ops " .. tostring(f.operations_since_reduction))
 for i = 1, 4 do
-  if i == 3 then
-    print("About to hit threshold on next operation (ops = " .. tostring(f.operations_since_reduction) .. ", threshold = " .. tostring(f.reduction_threshold) .. ")")
-  end
-  local prev_f = tostring(f.num) .. "/" .. tostring(f.den)
-  f = f + Fractional("0/1")
-  local curr_f = tostring(f.num) .. "/" .. tostring(f.den)
-  reduced = prev_f ~= curr_f
-  local status = reduced and "(AUTO-REDUCED!)" or ""
-  print("After operation " .. tostring(i) .. ": " .. tostring(f.num) .. "/" .. tostring(f.den) .. " (ops: " .. tostring(f.operations_since_reduction) .. ")" .. tostring(status))
+	if i == 3 then
+		print("About to hit threshold on next operation (ops = " .. tostring(f.operations_since_reduction) .. ", threshold = " .. tostring(f.reduction_threshold) .. ")")
+	end
+	local prev_f = tostring(f.num) .. "/" .. tostring(f.den)
+	f = f + Fractional("0/1")
+	local curr_f = tostring(f.num) .. "/" .. tostring(f.den)
+	reduced = prev_f ~= curr_f
+	local status = reduced and "(AUTO-REDUCED!)" or ""
+	print("After operation " .. tostring(i) .. ": " .. tostring(f.num) .. "/" .. tostring(f.den) .. " (ops: " .. tostring(f.operations_since_reduction) .. ")" .. tostring(status))
 end
 return print("\nDemo complete!")

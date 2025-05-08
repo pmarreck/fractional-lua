@@ -1,5 +1,5 @@
-#!/usr/bin/env moonrun
--- perf_demo.moon
+#!/usr/bin/env yuerun
+-- perf_demo.yue
 -- Tests performance of fractional library for financial calculations
 
 Fractional = require "fractional"
@@ -16,12 +16,12 @@ TRANSACTION_SEED = 12345   -- Seed for transaction generation (for reproducibili
 load_stock_data = ->
 	file = io.open(DATA_FILE, "r")
 	if not file
-		error("Could not find stock price data file. Run stock_data_generator.moon first.")
+		error("Could not find stock price data file. Run stock_data_generator.yue first.")
 		
 	-- Parse header to get ticker symbols
-	header = file\read("*line")
+	header = file::read("*line")
 	tickers = {}
-	for ticker in header\gmatch("[^\t]+")
+	for ticker in header::gmatch("[^\t]+")
 		table.insert(tickers, ticker)
 	
 	-- First column is date, so remove it
@@ -31,13 +31,13 @@ load_stock_data = ->
 	prices = {}
 	days = {}
 	
-	for line in file\lines()
+	for line in file::lines()
 		if line and line != ""
 			values = {}
 			day_data = {}
 			i = 1
 			
-			for value in line\gmatch("[^\t]+")
+			for value in line::gmatch("[^\t]+")
 				if i == 1
 					-- First column is date
 					day_data.date = value
@@ -50,7 +50,7 @@ load_stock_data = ->
 			
 			prices[day_data.date] = day_data
 	
-	file\close()
+	file::close()
 	return {
 		tickers: tickers,  -- List of stock tickers
 		days: days,        -- List of dates in chronological order
@@ -243,8 +243,8 @@ class Portfolio
 			
 		-- Extract up to 12 significant digits from numerator and denominator
 		sig_digits = 12
-		num_significant = string.sub(num_str\gsub("^%-", ""), 1, math.min(sig_digits, #num_str))
-		den_significant = string.sub(den_str\gsub("^%-", ""), 1, math.min(sig_digits, #den_str))
+		num_significant = string.sub(num_str::gsub("^%-", ""), 1, math.min(sig_digits, #num_str))
+		den_significant = string.sub(den_str::gsub("^%-", ""), 1, math.min(sig_digits, #den_str))
 		
 		-- Handle padding if one number is shorter
 		if #num_str < sig_digits
@@ -280,7 +280,7 @@ class Portfolio
 				return string.format("#{prefix}%.2f", ratio)
 		
 		-- Fallback to the normal format method
-		return frac\format_money()
+		return frac::format_money()
 	
 	print_summary: =>
 		print "\nPortfolio Summary: #{@name}"
@@ -294,7 +294,7 @@ class Portfolio
 			return_pct = @cumulative_return[last_date] * Frac(100)
 			
 			-- Format percent properly - use to_number_for_display to get a simple number without approximation details
-			return_val = return_pct\to_number_for_display()
+			return_val = return_pct::to_number_for_display()
 			return_formatted = string.format("%.2f%%", return_val)
 			
 			-- Format final value
@@ -312,7 +312,7 @@ class Portfolio
 				formatted_value = @format_large_fraction(value)
 				
 				-- Format shares using our built-in format method with 5 decimal places
-				formatted_shares = shares\format("", 5)
+				formatted_shares = shares::format("", 5)
 					
 				formatted_price = string.format("%.2f", last_price)
 				print "  #{ticker}: #{formatted_shares} shares @ $#{formatted_price} = #{formatted_value} (#{value})"
@@ -358,20 +358,20 @@ generate_random_transactions = (portfolio, num_transactions) ->
 			
 			-- Only buy if we have enough cash and with some randomness
 			if portfolio.cash > Frac(amount) and math.random() < 0.8
-				portfolio\buy(date, ticker, amount)
+				portfolio::buy(date, ticker, amount)
 		else
 			-- Sell (30% of transactions if we own the stock)
 			if math.random() < 0.3
 				-- 30% chance to sell all
-				portfolio\sell(date, ticker, "all")
+				portfolio::sell(date, ticker, "all")
 			else
 				-- Otherwise sell a random dollar amount of what we own
 				current_value = portfolio.holdings[ticker] * Frac(portfolio.market.prices[date][ticker])
-				max_sell = current_value\to_number()
+				max_sell = current_value::to_number()
 				
 				if max_sell > 100  -- Only sell if worth more than $100
 					amount = math.random(100, math.min(max_sell, 5000))
-					portfolio\sell(date, ticker, amount)
+					portfolio::sell(date, ticker, amount)
 
 -- Main performance test
 print "Portfolio Performance Testing with Fractional Library"
@@ -381,7 +381,7 @@ print "===================================================="
 print "Loading stock market data..."
 if not io.open(DATA_FILE, "r")
 	print "Stock data file not found. Generating synthetic data first..."
-	os.execute("moonrun stock_data_generator.moon")
+	os.execute("yuerun stock_data_generator.yue")
 
 -- Load market data into global variable for easy access
 market = load_stock_data()
@@ -404,10 +404,10 @@ for i=1, NUM_PORTFOLIOS
 	generate_random_transactions(portfolio, transactions_per_portfolio)
 	
 	-- Calculate portfolio value for all days
-	portfolio\calculate_all_values()
+	portfolio::calculate_all_values()
 	
 	-- Calculate returns
-	portfolio\calculate_returns()
+	portfolio::calculate_returns()
 	
 	-- Add to list
 	table.insert(portfolios, portfolio)
@@ -444,6 +444,6 @@ print "Individual Portfolio Results"
 print "===================================================="
 
 for _, portfolio in ipairs(portfolios)
-	portfolio\print_summary()
+	portfolio::print_summary()
 
 print "\nPerformance test complete!"

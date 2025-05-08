@@ -6,8 +6,8 @@ script_path="$script_dir/$(basename "${BASH_SOURCE[0]}")"
 
 usage() {
 	cat <<EOF >&2
-Usage: moonbuild [--test] <file>
-Compile a Moonscript file to Lua if needed.
+Usage: yuebuild [--test] <file>
+Compile a Yuescript file to Lua if needed.
 Options:
 	--test   Run built-in unit tests.
 EOF
@@ -17,16 +17,16 @@ main() {
 	if [[ $# -ne 1 ]]; then usage; exit 1; fi
 	input="$1"
 
-	# Determine source and base for .moon files (support extensionless input)
-	if [[ "$input" == *.moon ]]; then
-		base="${input%.moon}"
+	# Determine source and base for .yue files (support extensionless input)
+	if [[ "$input" == *.yue ]]; then
+		base="${input%.yue}"
 		src="$input"
 	elif [[ -e "$input" ]]; then
 		base="$input"
 		src="$input"
 	else
 		base="$input"
-		src="$input.moon"
+		src="$input.yue"
 	fi
 	out="$base.lua"
 
@@ -35,16 +35,16 @@ main() {
 		exit 1
 	fi
 
-	# Build Moonscript dependencies first (require'd modules that actually exist)
+	# Build Yuescript dependencies first (require'd modules that actually exist)
 	dir="$(dirname "$src")"
 	while IFS= read -r module; do
-		modpath="$dir/$module.moon"
+		modpath="$dir/$module.yue"
 		if [[ -e "$modpath" ]]; then
 			"$script_path" "$modpath"
 		fi
 	done < <(
-		grep -Eo "require *['\"][^'\"]+['\"]" "$src" 2>/dev/null \
-		| sed -E "s/require *['\"]([^'\"]+)['\"]/\\1/" || true
+		grep -Eo "(require|import) *['\"][^'\"]+['\"]" "$src" 2>/dev/null \
+		| sed -E "s/(require|import) *['\"]([^'\"]+)['\"]/\\2/" || true
 	)
 
 	# Skip build if timestamps match
@@ -54,7 +54,8 @@ main() {
 		fi
 	fi
 
-	moonc "$src"
+	# Run yue compiler silently
+	yue "$src" > /dev/null 2>&1
 	if [[ ! -e "$out" ]]; then
 		echo "Error: expected '$out' after compilation." >&2
 		exit 1
@@ -66,24 +67,26 @@ main() {
 # Test suite
 
 test_suite() {
+	# Temporarily disable error handling for tests
+	set +e
 	local failures=0
-	echo "Running moonbuild tests..."
+	echo "Running yuebuild tests..."
 
 	# Test 1: nonexistent file
 	printf "Test 1 (nonexistent file)... "
-	out=$("$script_path" nonexistent.moon 2>&1)
+	out=$("$script_path" nonexistent.yue 2>&1)
 	rc=$?
 	if [[ $rc -ne 0 ]]; then echo "PASSED"; else echo "FAILED"; failures=$((failures+1)); fi
 
 	# Test 2: missing lua file
 	printf "Test 2 (missing lua file)... "
 	tmp2=$(mktemp -d) && cd "$tmp2"
-	echo 'print "hello"' > foo.moon
-	out=$("$script_path" foo.moon 2>&1)
+	echo 'print "hello"' > foo.yue
+	out=$("$script_path" foo.yue 2>&1)
 	rc=$?
 	if [[ $rc -eq 0 && -e foo.lua ]]; then
 		# timestamps should match via shell built-in
-		if [[ ! foo.moon -nt foo.lua && ! foo.lua -nt foo.moon ]]; then echo "PASSED"; else echo "FAILED"; failures=$((failures+1)); fi
+		if [[ ! foo.yue -nt foo.lua && ! foo.lua -nt foo.yue ]]; then echo "PASSED"; else echo "FAILED"; failures=$((failures+1)); fi
 	else
 		echo "FAILED"; failures=$((failures+1))
 	fi
@@ -92,29 +95,29 @@ test_suite() {
 	# Test 3: outdated lua file
 	printf "Test 3 (outdated lua file)... "
 	tmp3=$(mktemp -d) && cd "$tmp3"
-	echo 'print "hello"' > foo.moon
-	"$script_path" foo.moon >/dev/null 2>&1
+	echo 'print "hello"' > foo.yue
+	"$script_path" foo.yue >/dev/null 2>&1
 	# make lua older
 	gtouch -d "2000-01-01 00:00:00" foo.lua
-	out=$("$script_path" foo.moon 2>&1)
+	out=$("$script_path" foo.yue 2>&1)
 	rc=$?
 	if [[ $rc -eq 0 ]]; then
 		# timestamps should match via shell built-in
-		if [[ ! foo.moon -nt foo.lua && ! foo.lua -nt foo.moon ]]; then echo "PASSED"; else echo "FAILED"; failures=$((failures+1)); fi
+		if [[ ! foo.yue -nt foo.lua && ! foo.lua -nt foo.yue ]]; then echo "PASSED"; else echo "FAILED"; failures=$((failures+1)); fi
 	else
 		echo "FAILED"; failures=$((failures+1))
 	fi
 	cd - >/dev/null && rm -rf "$tmp3"
 
-	# Test 4: input without .moon suffix
-	printf "Test 4 (input without .moon)... "
+	# Test 4: input without .yue suffix
+	printf "Test 4 (input without .yue)... "
 	tmp4=$(mktemp -d) && cd "$tmp4"
-	echo 'print "hi"' > bar.moon
+	echo 'print "hi"' > bar.yue
 	out=$("$script_path" bar 2>&1)
 	rc=$?
 	if [[ $rc -eq 0 && -e bar.lua ]]; then
 		# timestamps should match via shell built-in
-		if [[ ! bar.moon -nt bar.lua && ! bar.lua -nt bar.moon ]]; then echo "PASSED"; else echo "FAILED"; failures=$((failures+1)); fi
+		if [[ ! bar.yue -nt bar.lua && ! bar.lua -nt bar.yue ]]; then echo "PASSED"; else echo "FAILED"; failures=$((failures+1)); fi
 	else
 		echo "FAILED"; failures=$((failures+1))
 	fi
@@ -123,23 +126,27 @@ test_suite() {
 	# Summary
 	if [[ $failures -eq 0 ]]; then
 		echo "All tests passed"
+		# Restore error handling before exit
+		set -e
 		exit 0
 	else
 		echo "$failures test(s) failed"
+		# Restore error handling before exit
+		set -e
 		exit 1
 	fi
 }
 
 # Check if script is being executed directly or sourced/imported
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
-		# Script is being executed directly
-		if [[ "${1:-}" == "--test" ]]; then 
-				test_suite
-				exit $?
-		else
-				main "$@"
-		fi
+	# Script is being executed directly
+	if [[ "${1:-}" == "--test" ]]; then 
+		test_suite
+		exit $?
+	else
+		main "$@"
+	fi
 else
-		# Script is being sourced/imported, don't run tests automatically
-		:  # No-op, just define the functions
+	# Script is being sourced/imported, don't run tests automatically
+	:  # No-op, just define the functions
 fi

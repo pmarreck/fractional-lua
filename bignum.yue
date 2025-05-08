@@ -1,5 +1,5 @@
-#!/usr/bin/env moonrun
--- bignum.moon
+#!/usr/bin/env yuerun
+-- bignum.yue
 
 ffi = require "ffi"
 
@@ -82,12 +82,12 @@ mpq_wrapper = ffi.metatype("struct { mpq_t value; }", {
 
 class Bignum
 	new: (input=0) =>
-		if Bignum\is_instance(input)
+		if Bignum::is_instance(input)
 			return input
 		@raw = { value: ffi.new("__mpz_struct[1]") }
 		gmp.__gmpz_init(@raw.value)
 		if type(input) == "string"
-			if input\match("^-?%d+$") or input\match("^-?%d+%.0+$")
+			if input::match("^-?%d+$") or input::match("^-?%d+%.0+$")
 				gmp.__gmpz_set_str(@raw.value, input, 10)
 			else
 				error("Invalid Bignum string: must be integer-like")
@@ -108,10 +108,10 @@ class Bignum
 			error("GMP failed to convert bignum to string")
 		ffi.string(cstr)
 
-	__tostring: (self) -> self\tostring!
+	__tostring: (self) -> self::tostring!
 
 	_binop: (other, op) =>
-		unless Bignum\is_instance(other)
+		unless Bignum::is_instance(other)
 			other = Bignum(other)
 		out = Bignum(0)
 		gmp["__gmpz_#{op}"](out.raw.value, @raw.value, other.raw.value)
@@ -129,17 +129,17 @@ class Bignum
 		out
 
 	__eq: (other) =>
-		unless Bignum\is_instance(other)
+		unless Bignum::is_instance(other)
 			other = Bignum(other)
 		gmp.__gmpz_cmp(@raw.value, other.raw.value) == 0
 
 	__lt: (other) =>
-		unless Bignum\is_instance(other)
+		unless Bignum::is_instance(other)
 			other = Bignum(other)
 		gmp.__gmpz_cmp(@raw.value, other.raw.value) < 0
 
 	__le: (other) =>
-		unless Bignum\is_instance(other)
+		unless Bignum::is_instance(other)
 			other = Bignum(other)
 		gmp.__gmpz_cmp(@raw.value, other.raw.value) <= 0
 
@@ -156,18 +156,18 @@ class Bignum
 		out
 
 	gcd: (self, other) ->
-		unless Bignum\is_instance(other)
+		unless Bignum::is_instance(other)
 			other = Bignum(other)
 		out = Bignum(0)
 		gmp.__gmpz_gcd(out.raw.value, self.raw.value, other.raw.value)
 		out
 
 	-- Float conversion (lossy)
-	to_number: (self) -> tonumber self\tostring!
+	to_number: (self) -> tonumber self::tostring!
 
 	-- Annotated float conversion
 	to_number_annotated: (self) ->
-		str = self\tostring!
+		str = self::tostring!
 		num = tonumber str
 		est_loss = #str > 15 and ("~" .. (#str - 15) .. " digits lost") or "~0 digits lost"
 		num, est_loss
@@ -175,9 +175,9 @@ class Bignum
 	-- Direct GMP conversion of a ratio to float
 	@ratio_to_double: (num, den) ->
 		-- Make sure we have Bignum objects
-		unless Bignum\is_instance(num)
+		unless Bignum::is_instance(num)
 			num = Bignum(num)
-		unless Bignum\is_instance(den)
+		unless Bignum::is_instance(den)
 			den = Bignum(den)
 			
 		-- Check for division by zero without using sgn
@@ -241,11 +241,12 @@ class Bignum
 		type(val) == "table" and val.__class == Bignum
 
 -- Test suite trigger
-if arg and arg[0] and arg[1] == "--test" and arg[0]\match("bignum")
-	script_path = arg[0]\match("(.*/)")
+if arg and arg[0] and arg[1] == "--test" and arg[0]::match("bignum")
+	script_path = arg[0]::match("(.*/)")
 	if not script_path or script_path == ""
 		script_path = "./"
-	package.path = script_path .. "?.lua;" .. script_path .. "?.moon;" .. package.path
+	-- Make sure we're using the correct path for Yuescript files
+	package.path = script_path .. "?.lua;" .. script_path .. "?.yue;" .. package.path
 	cli_utils = require "cli_utils"
 	tf = cli_utils.assert_factory!
 	B = Bignum
@@ -256,22 +257,22 @@ if arg and arg[0] and arg[1] == "--test" and arg[0]\match("bignum")
 	tf.assert_equal "5", tostring(B("10") / B("2")), "10 / 2 == 5"
 	tf.assert_equal "1", tostring(B("10") % B("3")), "10 % 3 == 1"
 	tf.assert_equal "1024", tostring(B("2") ^ 10), "2 ^ 10 == 1024"
-	tf.assert_equal "42", tostring(B("-42")\abs!), "abs(-42) == 42"
+	tf.assert_equal "42", tostring(B("-42")::abs!), "abs(-42) == 42"
 
 	-- Dedicated test for the method form
-	tf.assert_equal "123", B("123")\tostring!, "Bignum:tostring! method works"
+	tf.assert_equal "123", B("123")::tostring!, "Bignum:tostring! method works"
 
-	f, note = B("12345678901234567890")\to_number_annotated!
+	f, note = B("12345678901234567890")::to_number_annotated!
 	tf.assert_equal "number", type(f), "float conversion returns number"
 	tf.assert_equal "string", type(note), "conversion note is string"
 
-	tf.assert_equal B("2"), B("6")\band(B("3")), "6 AND 3 == 2"
-	tf.assert_equal B("7"), B("6")\bor(B("3")), "6 OR 3 == 7"
-	tf.assert_equal B("5"), B("6")\bxor(B("3")), "6 XOR 3 == 5"
-	tf.assert_equal B("16"), B("2")\shl(3), "2 << 3 == 16"
-	tf.assert_equal B("4"), B("16")\shr(2), "16 >> 2 == 4"
+	tf.assert_equal B("2"), B("6")::band(B("3")), "6 AND 3 == 2"
+	tf.assert_equal B("7"), B("6")::bor(B("3")), "6 OR 3 == 7"
+	tf.assert_equal B("5"), B("6")::bxor(B("3")), "6 XOR 3 == 5"
+	tf.assert_equal B("16"), B("2")::shl(3), "2 << 3 == 16"
+	tf.assert_equal B("4"), B("16")::shr(2), "16 >> 2 == 4"
 
-	io.stderr\write "#{tf.summary!}\n"
+	io.stderr::write "#{tf.summary!}\n"
 	os.exit tf.fails!
 
 return Bignum

@@ -1,6 +1,10 @@
 # Fractional-Lua: Arbitrary Precision Fractional Number Library
 
-A high-performance, arbitrary precision fractional number library implemented in MoonScript/Lua, designed for financial calculations requiring exact precision.
+A high-performance, arbitrary precision fractional number library implemented in MoonScript/Yuescript/Lua, designed for financial calculations requiring exact precision.
+
+## Author's Note
+
+It's been incredibly enjoyable to discover and work with better syntaxes for what is arguably the fastest non-compiled scripting language available (LuaJIT - seriously underrated!). I'm exploring its use not only as a substitute for my many gnarly bash shell scripts but also for backend financial calculations and speculation through the GMP library and my creation of the Fractional and Bignum classes. These enable hyper-accurate yet still extremely fast financial calculations without requiring a compile step every time. The combination of LuaJIT's performance with the elegant syntax of MoonScript/Yuescript creates a powerful toolkit for rapid development of high-performance applications.
 
 ## Features
 
@@ -13,7 +17,9 @@ A high-performance, arbitrary precision fractional number library implemented in
 ## System Requirements
 
 - [LuaJIT](https://luajit.org/) (2.0.5+) - Just-in-time compiler for Lua
-- [MoonScript](https://moonscript.org/) (0.5.0+) - Language that compiles to Lua
+- One of the following:
+  - [MoonScript](https://moonscript.org/) (0.5.0+) - Language that compiles to Lua
+  - [Yuescript](https://yuescript.org/) (0.17.0+) - Modern dialect of MoonScript
 - [GNU Multiple Precision Library (GMP)](https://gmplib.org/) (6.0.0+) - Arbitrary precision arithmetic library
 
 ### Installation Guidelines
@@ -22,7 +28,12 @@ A high-performance, arbitrary precision fractional number library implemented in
 
 ```bash
 # Install dependencies with Homebrew
-brew install luajit moonscript gmp
+brew install luajit gmp
+
+# Install either MoonScript or Yuescript
+brew install moonscript
+# OR
+brew install yuescript
 
 # Set GMP path (add to your .bashrc or .zshrc)
 export GMP_PATH=/opt/homebrew/lib/libgmp.dylib
@@ -34,11 +45,31 @@ export GMP_PATH=/opt/homebrew/lib/libgmp.dylib
 # Install dependencies
 sudo apt-get install luajit libluajit-5.1-dev libgmp-dev
 
-# Install MoonScript
+# Install either MoonScript or Yuescript via LuaRocks
 sudo luarocks install moonscript
+# OR
+sudo luarocks install yuescript
 
 # Set GMP path (add to your .bashrc)
 export GMP_PATH=/usr/lib/x86_64-linux-gnu/libgmp.so
+```
+
+#### Building Yuescript from source (alternative)
+
+Yuescript can also be built from source, which is useful for the latest features or for integration with Nix:
+
+```bash
+# Clone the repository
+git clone https://github.com/pigpigyyy/Yuescript.git
+cd Yuescript
+
+# Build using CMake
+mkdir build && cd build
+cmake ..
+make
+
+# Install
+sudo make install
 ```
 
 ## Performance
@@ -104,10 +135,21 @@ interest = principal * (Fractional(1) + rate)^years
 
 ## Library Components
 
+### MoonScript Version
 - **bignum.moon/lua**: Arbitrary precision integer implementation using GMP
 - **fractional.moon/lua**: Core fractional number implementation
 - **cli_utils.moon/lua**: Utility functions for command-line tools
 - **perf_demo.moon/lua**: Performance testing application
+- **demo.moon/lua**: Demonstration of Fractional class features
+- **stock_data_generator.moon/lua**: Generates synthetic stock data for testing
+
+### Yuescript Version
+- **bignum.yue/lua**: Arbitrary precision integer implementation using GMP
+- **fractional.yue/lua**: Core fractional number implementation
+- **cli_utils.yue/lua**: Utility functions for command-line tools
+- **perf_demo.yue/lua**: Performance testing application
+- **demo.yue/lua**: Demonstration of Fractional class features
+- **stock_data_generator.yue/lua**: Generates synthetic stock data for testing
 
 ## Memory Management
 
@@ -136,7 +178,9 @@ mpq_wrapper = ffi.metatype("struct { mpq_t value; }", {
 
 ### Unit Tests
 
-Each core module includes unit tests that can be run directly:
+Each core module includes unit tests that can be run directly. You can use either the MoonScript or Yuescript versions:
+
+#### MoonScript
 
 ```bash
 # Run individual unit tests
@@ -148,13 +192,50 @@ Each core module includes unit tests that can be run directly:
 for test in {bignum,fractional,cli_utils}.moon; do ./$$test --test; done
 ```
 
+#### Yuescript
+
+```bash
+# Run individual unit tests
+./bignum.yue --test
+./fractional.yue --test
+./cli_utils.yue --test
+
+# Run all tests at once
+for test in {bignum,fractional,cli_utils}.yue; do ./$$test --test; done
+```
+
 ### Performance Tests
 
 The performance demo creates 20 test portfolios and runs 20,000 transactions to measure the library's performance:
 
+#### MoonScript
+
 ```bash
 # Run performance test
-./perf_demo.moon > perf_demo_out.txt
+./perf_demo.moon > perf_demo_moon_out.txt
+```
+
+#### Yuescript
+
+```bash
+# Run performance test
+./perf_demo.yue > perf_demo_yue_out.txt
+```
+
+### Demo
+
+You can run the demonstration script to see the Fractional class in action:
+
+#### MoonScript
+
+```bash
+./demo.moon
+```
+
+#### Yuescript
+
+```bash
+./demo.yue
 ```
 
 ## License
@@ -166,3 +247,4 @@ This project is licensed under the GNU General Public License v3.0 (GPL-3.0) - s
 - GNU Multiple Precision Library for arbitrary precision arithmetic
 - LuaJIT FFI for efficient C library bindings in Lua
 - MoonScript for elegant syntax over Lua
+- Yuescript for modern improvements to the MoonScript language

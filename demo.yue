@@ -1,5 +1,5 @@
-#!/usr/bin/env moonrun
--- demo.moon
+#!/usr/bin/env yuerun
+-- demo.yue
 -- A demonstration of the Fractional class
 
 DEBUG = true  -- Set to true to see debug output
@@ -17,7 +17,7 @@ print "---------------------------"
 
 -- Display helper function
 display = (title, frac) ->
-	num, loss = frac\to_number_annotated!
+	num, loss = frac::to_number_annotated()
 	print "#{title}: #{frac} (≈ #{num} #{loss})"
 
 -- Create fractions different ways
@@ -60,12 +60,12 @@ unreduced.num = Bignum(123456)
 unreduced.den = Bignum(7890)
 print "Unreduced: #{unreduced.num}/#{unreduced.den} (raw internal representation)"
 
-unreduced\reduce!
+unreduced::reduce()
 display "After manual reduction", unreduced
 
 print "\nReduction threshold example:"
 f_auto = Fractional("1/1")
-f_auto\set_reduction_threshold(3)  -- Reduce after 3 operations
+f_auto::set_reduction_threshold(3)  -- Reduce after 3 operations
 print "Initial: #{f_auto} (reduction threshold: #{f_auto.reduction_threshold})"
 
 print "\nDemonstrate auto-reduction (simplified):"

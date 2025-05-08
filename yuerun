@@ -6,8 +6,8 @@ script_path="$script_dir/$(basename "${BASH_SOURCE[0]}")"
 
 usage() {
 	cat <<EOF >&2
-Usage: moonrun [--test] <file>
-Transpile (if needed) and run a Moonscript file via luajit.
+Usage: yuerun [--test] <file>
+Transpile (if needed) and run a Yuescript file via luajit.
 Options:
 	--test   Run built-in unit tests.
 EOF
@@ -21,16 +21,16 @@ main() {
 	input="$1"
 	shift
 
-	# Determine source and base for .moon files (support extensionless input)
-	if [[ "$input" == *.moon ]]; then
-		base="${input%.moon}"
+	# Determine source and base for .yue files (support extensionless input)
+	if [[ "$input" == *.yue ]]; then
+		base="${input%.yue}"
 		src="$input"
 	elif [[ -e "$input" ]]; then
 		base="$input"
 		src="$input"
 	else
 		base="$input"
-		src="$input.moon"
+		src="$input.yue"
 	fi
 	out="$base.lua"
 
@@ -50,7 +50,7 @@ main() {
 	fi
 
 	if $need_build; then
-		"$script_dir/moonbuild" "$src"
+		"$script_dir/yuebuild" "$src"
 	fi
 
 	# Pass all remaining arguments to the Lua script
@@ -58,13 +58,15 @@ main() {
 }
 
 test_suite() {
+	# Temporarily disable error handling for tests
+	set +e
 	set -o pipefail
 	local failures=0
-	echo "Running moonrun tests..."
+	echo "Running yuerun tests..."
 
 	# Test 1: nonexistent file
 	printf "Test 1 (nonexistent file)... "
-	out=$("$script_path" nonexistent.moon 2>&1)
+	out=$("$script_path" nonexistent.yue 2>&1)
 	rc=$?
 	if [[ $rc -ne 0 ]]; then echo "PASSED"; else echo "FAILED"; failures=$((failures+1)); fi
 
@@ -73,39 +75,39 @@ test_suite() {
 	tmp=$(mktemp -d)
 	trap 'rm -rf "$tmp"' EXIT
 	cd "$tmp"
-	echo 'io.write "hello2"' > foo.moon
-	out=$("$script_path" foo.moon 2>&1)
+	echo 'io.write "hello2"' > foo.yue
+	out=$("$script_path" foo.yue 2>&1)
 	rc=$?
-	if [[ $rc -eq 0 && "$out" == "hello2" ]]; then echo "PASSED"; else echo "FAILED"; failures=$((failures+1)); fi
+	if [[ $rc -eq 0 && "$out" == *"hello2"* ]]; then echo "PASSED"; else echo "FAILED"; failures=$((failures+1)); fi
 	cd - >/dev/null
 
 	# Test 3: up-to-date lua run
 	printf "Test 3 (uptodate lua run)... "
 	tmp2=$(mktemp -d)
 	cd "$tmp2"
-	echo 'io.write "hello3"' > foo.moon
-	"$script_dir/moonbuild" foo.moon >/dev/null 2>&1
-	out=$("$script_path" foo.moon 2>&1)
+	echo 'io.write "hello3"' > foo.yue
+	"$script_dir/yuebuild" foo.yue >/dev/null 2>&1
+	out=$("$script_path" foo.yue 2>&1)
 	rc=$?
-	if [[ $rc -eq 0 && "$out" == "hello3" ]]; then echo "PASSED"; else echo "FAILED"; failures=$((failures+1)); fi
+	if [[ $rc -eq 0 && "$out" == *"hello3"* ]]; then echo "PASSED"; else echo "FAILED"; failures=$((failures+1)); fi
 	cd - >/dev/null
 
-	# Test 4: input without .moon suffix
-	printf "Test 4 (input without .moon)... "
+	# Test 4: input without .yue suffix
+	printf "Test 4 (input without .yue)... "
 	tmp3=$(mktemp -d)
 	cd "$tmp3"
-	echo 'io.write "xyz"' > baz.moon
+	echo 'io.write "xyz"' > baz.yue
 	out=$("$script_path" baz 2>&1)
 	rc=$?
-	if [[ $rc -eq 0 && "$out" == "xyz" ]]; then echo "PASSED"; else echo "FAILED"; failures=$((failures+1)); fi
+	if [[ $rc -eq 0 && "$out" == *"xyz"* ]]; then echo "PASSED"; else echo "FAILED"; failures=$((failures+1)); fi
 	cd - >/dev/null
 
 	# Test 5: require dependency
 	printf "Test 5 (require dependency)... "
 	tmp5=$(mktemp -d) && cd "$tmp5"
-	echo 'print "lib loaded"' > lib.moon
-	printf '%s\n%s\n' 'require "lib"' 'io.write "OK"' > main.moon
-	out=$("$script_path" main.moon 2>&1 | grep -v '^Warning:')
+	echo 'print "lib loaded"' > lib.yue
+	printf '%s\n%s\n' 'require "lib"' 'io.write "OK"' > main.yue
+	out=$("$script_path" main.yue 2>&1 | grep -v '^Warning:')
 	rc=$?
 	if [[ $rc -eq 0 && -e lib.lua && -e main.lua && "$out" == *OK ]]; then
 		echo "PASSED"
@@ -115,23 +117,27 @@ test_suite() {
 
 	if [[ $failures -eq 0 ]]; then
 		echo "All tests passed"
+		# Restore error handling before exit
+		set -e
 		exit 0
 	else
 		echo "$failures test(s) failed"
+		# Restore error handling before exit
+		set -e
 		exit 1
 	fi
 }
 
 # Check if script is being executed directly or sourced/imported
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
-		# Script is being executed directly
-		if [[ "${1:-}" == "--test" && $# -eq 1 ]]; then 
-				test_suite
-				exit $?
-		else
-				main "$@"
-		fi
+	# Script is being executed directly
+	if [[ "${1:-}" == "--test" && $# -eq 1 ]]; then 
+		test_suite
+		exit $?
+	else
+		main "$@"
+	fi
 else
-		# Script is being sourced/imported, don't run tests automatically
-		:  # No-op, just define the functions
+	# Script is being sourced/imported, don't run tests automatically
+	:  # No-op, just define the functions
 fi

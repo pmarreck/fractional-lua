@@ -1,5 +1,5 @@
-#!/usr/bin/env moonrun
--- stock_data_generator.moon
+#!/usr/bin/env yuerun
+-- stock_data_generator.yue
 -- Generates synthetic stock price data for performance testing
 
 cli_utils = require "cli_utils"
@@ -27,9 +27,9 @@ generate_stocks = ->
 	stocks = {}
 
 	-- Common stock tickers (made up)
-	tickers = {"AAPL", "MSFT", "GOOG", "AMZN", "META", "NFLX", "TSLA", "NVDA",
+	tickers = ["AAPL", "MSFT", "GOOG", "AMZN", "META", "NFLX", "TSLA", "NVDA",
 						 "CSCO", "INTC", "ADBE", "PYPL", "CMCSA", "PEP", "COST", "TMUS",
-						 "SBUX", "QCOM", "TXN", "CHTR", "AVGO", "GILD", "MDLZ", "FISV"}
+						 "SBUX", "QCOM", "TXN", "CHTR", "AVGO", "GILD", "MDLZ", "FISV"]
 
 	-- Use the provided tickers first
 	for i=1, math.min(NUM_STOCKS, #tickers)
@@ -111,7 +111,7 @@ write_to_tsv = (prices) ->
 		if ticker != "date"
 			table.insert(header, ticker)
 
-	file\write(table.concat(header, "\t") .. "\n")
+	file::write(table.concat(header, "\t") .. "\n")
 
 	-- Write data rows
 	for _, day_data in ipairs(prices)
@@ -123,9 +123,9 @@ write_to_tsv = (prices) ->
 				price = string.format("%.2f", day_data[ticker])
 				table.insert(row, price)
 
-		file\write(table.concat(row, "\t") .. "\n")
+		file::write(table.concat(row, "\t") .. "\n")
 
-	file\close()
+	file::close()
 	print "Generated #{#prices} days of price data for #{#header-1} stocks"
 	print "Output written to #{OUTPUT_FILE}"
 

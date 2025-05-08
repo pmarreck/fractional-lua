@@ -1,5 +1,5 @@
-#!/usr/bin/env moonrun
--- cli_utils.moon
+#!/usr/bin/env yuerun
+-- cli_utils.yue
 
 ffi = require "ffi"
 
@@ -18,12 +18,12 @@ seed_rng = ->
 	ffi.C.gettimeofday tv, nil
 	sec = tonumber tv.tv_sec
 	usec = tonumber tv.tv_usec
-	math.randomseed(sec * 1e6 + usec)
+	math.randomseed sec * 1e6 + usec
 	-- Return nil explicitly (this was causing a test failure)
 	nil
 
 -- Assertion with accumulation
-assert_factory = (writer = io.stderr\write) ->
+assert_factory = (writer = io.stderr::write) ->
 	fails = 0
 	passes = 0
 	
@@ -149,11 +149,11 @@ parse_args = (config, argv = arg) ->
 -- }
 
 -- Test suite trigger
-if arg and arg[0] and arg[1] == "--test" and arg[0]\match("cli_utils")
-	script_path = arg[0]\match("(.*/)") 
+if arg and arg[0] and arg[1] == "--test" and arg[0]::match("cli_utils")
+	script_path = arg[0]::match("(.*/)") 
 	if not script_path or script_path == ""
 		script_path = "./"
-	package.path = script_path .. "?.lua;" .. script_path .. "?.moon;" .. package.path
+	package.path = script_path .. "?.lua;" .. script_path .. "?.yue;" .. package.path
 	tf = assert_factory!
 	
 	-- Test seed_rng
@@ -318,7 +318,7 @@ if arg and arg[0] and arg[1] == "--test" and arg[0]\match("cli_utils")
 	tf.assert #help_output >= 3, "Help output should have at least 3 lines"
 	tf.assert_equal "Usage:", help_output[1], "Help output should start with 'Usage:'"
 	
-	io.stderr\write "#{tf.summary!}\n"
+	io.stderr::write "#{tf.summary!}\n"
 	os.exit tf.fails!
 
 return {

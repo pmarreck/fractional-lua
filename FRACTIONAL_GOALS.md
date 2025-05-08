@@ -1,7 +1,7 @@
 # Fractional Library Goals
 
 ## Overview
-Create a `fractional.moon` library that implements arbitrary precision fractions using the existing `bignum.moon` library.
+Create a `fractional.moon`/`fractional.yue` library that implements arbitrary precision fractions using the existing `bignum.moon`/`bignum.yue` library.
 
 ## Core Requirements
 
@@ -43,4 +43,5 @@ Create a `fractional.moon` library that implements arbitrary precision fractions
 
 ### References
 - MoonScript documentation: https://moonscript.org/reference
-- Existing bignum.moon implementation
+- Yuescript documentation: https://yuescript.org/doc/
+- Existing bignum.moon/bignum.yue implementation
